@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "whook"
-version = "1.0.0"
+version = "1.0.1"
 description = ""
 authors = ["Pavel Merkulov <merkulov0pavel@gmail.com>"]
 packages = [{include = "whook"}]

@@ -76,8 +76,8 @@ class DateRedirectMixin:
 
 
 
-@admin.register(DateRedirectMixin, models.WebHookLog)
-class WebHookLogAdmin(admin.ModelAdmin):
+@admin.register(models.WebHookLog)
+class WebHookLogAdmin(DateRedirectMixin, admin.ModelAdmin):
     list_display = ("event", "url", "created_at")
     search_fields = ("event", "url")
     list_filter = (WeekListFilter, "status",)
