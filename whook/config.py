@@ -1,0 +1,4 @@
+EVENTS = []
+
+MAX_RETRIES = 10
+BASE_DELAY = 30

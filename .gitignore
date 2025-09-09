@@ -1,0 +1,6 @@
+.pypirc
+dist
+.venv
+.git
+.idea
+publish.sh
