@@ -1,4 +1,4 @@
-from .settings import celery
+from .settings import celery, celery_queue
 from whook import config
 
 
@@ -25,5 +25,5 @@ def retry_webhooks(log_id: int) -> None:
     WebHookService().resend_webhook_by_log(log)
 
 if celery:
-    evoke_webhook = celery.task(evoke_webhook)
-    retry_webhooks = celery.task(retry_webhooks)
+    evoke_webhook = celery.task(queue=celery_queue)(evoke_webhook)
+    retry_webhooks = celery.task(queue=celery_queue)(retry_webhooks)
