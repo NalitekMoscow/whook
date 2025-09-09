@@ -4,25 +4,29 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('whook', '0001_initial'),
+        ("whook", "0001_initial"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='webhooklog',
-            name='detail',
-            field=models.JSONField(blank=True, null=True, verbose_name='Информация об отправке'),
+            model_name="webhooklog",
+            name="detail",
+            field=models.JSONField(blank=True, null=True, verbose_name="Информация об отправке"),
         ),
         migrations.AlterField(
-            model_name='webhooklog',
-            name='retries',
-            field=models.SmallIntegerField(default=0, verbose_name='Количество попыток повторной отправки'),
+            model_name="webhooklog",
+            name="retries",
+            field=models.SmallIntegerField(default=0, verbose_name="Количество попыток повторной отправки"),
         ),
         migrations.AlterField(
-            model_name='webhooklog',
-            name='status',
-            field=models.CharField(choices=[('pending', 'Ожидание'), ('success', 'Успешно'), ('failed', 'Ошибка')], default='pending', max_length=256, verbose_name='Статус отправки'),
+            model_name="webhooklog",
+            name="status",
+            field=models.CharField(
+                choices=[("pending", "Ожидание"), ("success", "Успешно"), ("failed", "Ошибка")],
+                default="pending",
+                max_length=256,
+                verbose_name="Статус отправки",
+            ),
         ),
     ]

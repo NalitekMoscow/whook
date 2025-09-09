@@ -10,6 +10,7 @@ import requests
 from django.utils import timezone
 
 from . import config, models, tasks
+from .settings import celery
 
 
 class WebHookService:
@@ -32,7 +33,10 @@ class WebHookService:
             self._evoke_webhook(app, data, webhook_log)
 
     def evoke_webhook_async(self, event: tuple[str, str], action: str, data: dict) -> None:
-        tasks.evoke_webhook.delay(event[0], action, data)
+        if celery:
+            tasks.evoke_webhook.delay(event[0], action, data)
+        else:
+            tasks.evoke_webhook(event[0], action, data)
 
     def _evoke_webhook(self, app: models.WebHookApp, data: dict, webhook_log: models.WebHookLog) -> None:
         payload = json.dumps(data, ensure_ascii=False).encode()
@@ -72,7 +76,10 @@ class WebHookService:
         webhook_log.save(update_fields=("detail", "status", "retries"))
         delay_seconds = config.BASE_DELAY * (2**webhook_log.retries)
         eta = timezone.now() + timedelta(seconds=delay_seconds)
-        tasks.retry_webhooks.apply_async((webhook_log.id,), eta=eta)
+        if celery:
+            tasks.retry_webhooks.apply_async((webhook_log.id,), eta=eta)
+        else:
+            tasks.retry_webhooks(webhook_log.id)
 
 
 def generate_secret_key(length: int = 50) -> str:
