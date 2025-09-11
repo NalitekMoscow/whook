@@ -14,7 +14,7 @@ class WebHookLog(models.Model):
     status = models.CharField("Статус отправки", choices=Status.choices, max_length=256, default=Status.PENDING)
     detail = models.JSONField("Информация об отправке", null=True, blank=True)
     url = models.CharField("Ссылка", max_length=200)
-    created_at = models.DateTimeField("Дата создания", auto_now_add=True)
+    created_at = models.DateTimeField("Дата создания", auto_now_add=True, db_index=True)
     app = models.ForeignKey("WebHookApp", on_delete=models.CASCADE, null=True)
     retries = models.SmallIntegerField("Количество попыток повторной отправки", default=0)
 
