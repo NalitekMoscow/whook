@@ -2,12 +2,105 @@ from datetime import date, datetime, time, timedelta
 
 from django import forms
 from django.contrib import admin
+from django.forms import CheckboxSelectMultiple
 from django.shortcuts import redirect
 from django.utils import timezone
-from django.forms import CheckboxSelectMultiple
+from django.utils.safestring import mark_safe
 
 from . import config, models, services
 
+
+class EventFieldsConfigWidget(forms.Widget):
+    def render(self, name, value, attrs=None, renderer=None):
+        value = value or {}
+        attrs = attrs or {}
+
+        html = []
+        html.append(f'<div class="whook-fields-ui" data-root="{name}">')
+
+        for event_code, event_title in config.EVENTS:
+            choices = config.EVENT_AVAILABLE_FIELDS.get(event_code) or []
+            if not choices:
+                continue
+
+            sub_name = f"{name}__{event_code}"
+            selected = value.get(event_code, [])
+
+            cb = CheckboxSelectMultiple(choices=choices)
+
+            html.append(
+                f"""
+                <fieldset class="whook-event-block" data-event="{event_code}"
+                          style="margin:12px 0; padding:10px; border:1px solid #ddd; border-radius:6px;">
+                  <legend style="padding:0 6px;">
+                    Поля для события «{event_title}» <span style="color:#888;">({event_code})</span>
+                  </legend>
+                  {cb.render(sub_name, selected, attrs=attrs, renderer=renderer)}
+                </fieldset>
+                """
+            )
+
+        html.append("</div>")
+        html.append(
+            f"""
+<script>
+(function() {{
+  function sync() {{
+    var root = document.querySelector('.whook-fields-ui[data-root="{name}"]');
+    if (!root) return;
+
+    var selected = new Set();
+    document.querySelectorAll('input[name="events"]').forEach(function(el) {{
+      if (el.checked) selected.add(el.value);
+    }});
+
+    root.querySelectorAll('.whook-event-block').forEach(function(block) {{
+      var code = block.getAttribute('data-event');
+      block.style.display = selected.has(code) ? '' : 'none';
+    }});
+  }}
+
+  document.addEventListener('change', function(e) {{
+    if (e.target && e.target.name === 'events') sync();
+  }});
+
+  if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', sync);
+  }} else {{
+    sync();
+  }}
+}})();
+</script>
+            """
+        )
+
+        return mark_safe("".join(html))
+
+    def value_from_datadict(self, data, files, name):
+        result = {}
+        for event_code, _ in config.EVENTS:
+            key = f"{name}__{event_code}"
+            vals = data.getlist(key)
+            if vals:
+                result[event_code] = vals
+        return result
+
+
+class EventFieldsConfigFormField(forms.Field):
+    def __init__(self, **kwargs):
+        super().__init__(required=False, widget=EventFieldsConfigWidget(), **kwargs)
+
+    def clean(self, value):
+        value = value or {}
+        cleaned = {}
+
+        for event_code, fields in value.items():
+            allowed = {k for k, _ in (config.EVENT_AVAILABLE_FIELDS.get(event_code) or [])}
+            filtered = [f for f in fields if f in allowed]
+            if filtered:
+                cleaned[event_code] = filtered
+
+        return cleaned
 
 def week_start_for(d: date) -> date:
     # понедельник (iso Monday=1)
@@ -80,57 +173,36 @@ class WebHookLogAdmin(DateRedirectMixin, admin.ModelAdmin):
 
 
 class WebHookAppChangeFormMixin(forms.ModelForm):
-    events = forms.MultipleChoiceField(choices=config.EVENTS, widget=forms.CheckboxSelectMultiple, required=False)
+    events = forms.MultipleChoiceField(
+        choices=config.EVENTS,
+        widget=forms.CheckboxSelectMultiple,
+        required=False,
+    )
+    selected_fields_ui = EventFieldsConfigFormField(
+        label="Выбор полей по событиям",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["events"].choices = config.EVENTS
-
         if self.instance and self.instance.pk:
-            selected_events = self.instance.events or []
+            self.initial["selected_fields_ui"] = self.instance.selected_fields or {}
         else:
-            selected_events = self.data.getlist('events') if self.data else []
-
-        for event_code, event_title in config.EVENTS:
-            if event_code in selected_events:
-                available_fields = config.EVENT_AVAILABLE_FIELDS.get(event_code, [])
-                if available_fields:
-                    field_name = f"fields_for_{event_code}"
-
-                    current_values = []
-                    if self.instance and self.instance.pk and self.instance.selected_fields:
-                        current_values = self.instance.selected_fields.get(event_code, [])
-
-                    self.fields[field_name] = forms.MultipleChoiceField(
-                        choices=available_fields,
-                        widget=CheckboxSelectMultiple,
-                        required=False,
-                        label=f"Поля для события '{event_title}'",
-                        initial=current_values,
-                        help_text="Если не выбрано ни одно поле, будут отправляться все данные"
-                    )
+            self.initial["selected_fields_ui"] = {}
 
     def save(self, commit=True):
         instance = super().save(commit=False)
-
-        # Сохраняем выбранные поля для каждого события
-        selected_fields = {}
-        for event_code, event_title in config.EVENTS:
-            field_name = f"fields_for_{event_code}"
-            if field_name in self.cleaned_data:
-                fields = self.cleaned_data[field_name]
-                if fields:
-                    selected_fields[event_code] = fields
-
-        instance.selected_fields = selected_fields
-
+        instance.selected_fields = self.cleaned_data.get("selected_fields_ui") or {}
         if commit:
             instance.save()
-
+            self.save_m2m()
         return instance
 
-
 class WebhookAddAppForm(WebHookAppChangeFormMixin):
+    class Meta:
+        model = models.WebHookApp
+        exclude = ("selected_fields",)
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -138,15 +210,10 @@ class WebhookAddAppForm(WebHookAppChangeFormMixin):
         if self.instance.pk is None:
             self.fields["secret_key"].initial = services.generate_secret_key()
 
-    class Meta:
-        model = models.WebHookApp
-        fields = "__all__"
-
-
 class WebhookChangeAppForm(WebHookAppChangeFormMixin):
     class Meta:
         model = models.WebHookApp
-        exclude = ("secret_key",)
+        exclude = ("secret_key", "selected_fields")
 
 
 @admin.register(models.WebHookApp)
@@ -160,9 +227,3 @@ class WebHookAppAdmin(admin.ModelAdmin):
         else:
             kwargs["form"] = WebhookChangeAppForm
         return super().get_form(request, obj, **kwargs)
-
-    class Media:
-        js = ('admin/js/webhook_app_fields_toggle.js',)
-        css = {
-            'all': ('admin/css/webhook_app_fields.css',)
-        }
