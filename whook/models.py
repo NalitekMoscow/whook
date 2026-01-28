@@ -32,6 +32,12 @@ class WebHookApp(models.Model):
     url = models.CharField(max_length=256, verbose_name="Ссылка")
     secret_key = models.CharField(max_length=512, verbose_name="Секретный ключ")
     events = ArrayField(models.CharField(max_length=256), default=list, blank=True, verbose_name="События")
+    selected_fields = models.JSONField(
+        blank=True,
+        default=dict,
+        verbose_name="Выбранные поля для событий",
+        help_text="Словарь вида {event_code: [field1, field2, ...]}"
+    )
 
     def __str__(self) -> str:
         return f"#{self.id}-{self.title}"
