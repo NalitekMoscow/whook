@@ -4,6 +4,7 @@ from django import forms
 from django.contrib import admin
 from django.shortcuts import redirect
 from django.utils import timezone
+from django.forms import CheckboxSelectMultiple
 
 from . import config, models, services
 
@@ -85,6 +86,49 @@ class WebHookAppChangeFormMixin(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.fields["events"].choices = config.EVENTS
 
+        if self.instance and self.instance.pk:
+            selected_events = self.instance.events or []
+        else:
+            selected_events = self.data.getlist('events') if self.data else []
+
+        for event_code, event_title in config.EVENTS:
+            if event_code in selected_events:
+                available_fields = config.EVENT_AVAILABLE_FIELDS.get(event_code, [])
+                if available_fields:
+                    field_name = f"fields_for_{event_code}"
+
+                    current_values = []
+                    if self.instance and self.instance.pk and self.instance.selected_fields:
+                        current_values = self.instance.selected_fields.get(event_code, [])
+
+                    self.fields[field_name] = forms.MultipleChoiceField(
+                        choices=available_fields,
+                        widget=CheckboxSelectMultiple,
+                        required=False,
+                        label=f"Поля для события '{event_title}'",
+                        initial=current_values,
+                        help_text="Если не выбрано ни одно поле, будут отправляться все данные"
+                    )
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+
+        # Сохраняем выбранные поля для каждого события
+        selected_fields = {}
+        for event_code, event_title in config.EVENTS:
+            field_name = f"fields_for_{event_code}"
+            if field_name in self.cleaned_data:
+                fields = self.cleaned_data[field_name]
+                if fields:
+                    selected_fields[event_code] = fields
+
+        instance.selected_fields = selected_fields
+
+        if commit:
+            instance.save()
+
+        return instance
+
 
 class WebhookAddAppForm(WebHookAppChangeFormMixin):
     def __init__(self, *args, **kwargs):
@@ -116,3 +160,9 @@ class WebHookAppAdmin(admin.ModelAdmin):
         else:
             kwargs["form"] = WebhookChangeAppForm
         return super().get_form(request, obj, **kwargs)
+
+    class Media:
+        js = ('admin/js/webhook_app_fields_toggle.js',)
+        css = {
+            'all': ('admin/css/webhook_app_fields.css',)
+        }

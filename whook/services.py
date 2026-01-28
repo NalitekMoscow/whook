@@ -38,8 +38,32 @@ class WebHookService:
         else:
             tasks.evoke_webhook(event[0], action, data)
 
+    def _filter_data_by_selected_fields(self, app: models.WebHookApp, event: str, data: dict) -> dict:
+        if not app.selected_fields or event not in app.selected_fields:
+            return data
+
+        selected_fields = app.selected_fields.get(event, [])
+
+        if not selected_fields:
+            return data
+
+        filtered_data = {
+            "event": data.get("event"),
+            "action": data.get("action"),
+            "state": {}
+        }
+
+        if "state" in data and isinstance(data["state"], dict):
+            for field in selected_fields:
+                if field in data["state"]:
+                    filtered_data["state"][field] = data["state"][field]
+
+        return filtered_data
+
     def _evoke_webhook(self, app: models.WebHookApp, data: dict, webhook_log: models.WebHookLog) -> None:
-        payload = json.dumps(data, ensure_ascii=False).encode()
+        filtered_data = self._filter_data_by_selected_fields(app, data.get("event"), data)
+
+        payload = json.dumps(filtered_data, ensure_ascii=False).encode()
         signature = hmac.new(app.secret_key.encode(), msg=payload, digestmod=sha256).hexdigest()
 
         headers = {
@@ -74,7 +98,7 @@ class WebHookService:
         webhook_log.status = models.WebHookLog.Status.FAILED
         webhook_log.detail = detail
         webhook_log.save(update_fields=("detail", "status", "retries"))
-        delay_seconds = config.BASE_DELAY * (2**webhook_log.retries)
+        delay_seconds = config.BASE_DELAY * (2 ** webhook_log.retries)
         eta = timezone.now() + timedelta(seconds=delay_seconds)
         if celery:
             tasks.retry_webhooks.apply_async((webhook_log.id,), eta=eta)
@@ -87,7 +111,10 @@ def generate_secret_key(length: int = 50) -> str:
     return "".join(secrets.choice(chars) for _ in range(length))
 
 
-def register_event(event_code: str, event_title: str) -> None:
+def register_event(event_code: str, event_title: str, available_fields: list[tuple[str, str]] = None) -> None:
     from . import config
 
     config.EVENTS.append((event_code, event_title))
+
+    if available_fields:
+        config.EVENT_AVAILABLE_FIELDS[event_code] = available_fields
