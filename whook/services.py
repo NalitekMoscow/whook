@@ -15,22 +15,23 @@ from .settings import celery
 
 class WebHookService:
     def evoke_webhook(self, event: str, action: str, data: dict) -> None:
-        apps = models.WebHookApp.objects.filter(events__icontains=event)
-        data = {
+        apps = models.WebHookApp.objects.filter(events__contains=[event])
+        base_payload = {
             "event": event,
             "action": action,
             "state": data,
         }
         for app in apps:
+            payload_for_app = self._filter_data_by_selected_fields(app, event, base_payload)
             webhook_log = models.WebHookLog.objects.create(
                 event=event,
                 action=action,
-                data=data,
+                data=payload_for_app,
                 status=models.WebHookLog.Status.PENDING,
                 app=app,
                 url=app.url,
             )
-            self._evoke_webhook(app, data, webhook_log)
+            self._evoke_webhook(app, payload_for_app, webhook_log)
 
     def evoke_webhook_async(self, event: tuple[str, str], action: str, data: dict) -> None:
         if celery:
@@ -39,31 +40,22 @@ class WebHookService:
             tasks.evoke_webhook(event[0], action, data)
 
     def _filter_data_by_selected_fields(self, app: models.WebHookApp, event: str, data: dict) -> dict:
-        if not app.selected_fields or event not in app.selected_fields:
+        mapping = app.selected_fields or {}
+        selected = mapping.get(event)
+        if not selected:
             return data
-
-        selected_fields = app.selected_fields.get(event, [])
-
-        if not selected_fields:
+        state = data.get("state")
+        if not isinstance(state, dict):
             return data
-
-        filtered_data = {
+        filtered_state = {k: state[k] for k in selected if k in state}
+        return {
             "event": data.get("event"),
             "action": data.get("action"),
-            "state": {}
+            "state": filtered_state,
         }
 
-        if "state" in data and isinstance(data["state"], dict):
-            for field in selected_fields:
-                if field in data["state"]:
-                    filtered_data["state"][field] = data["state"][field]
-
-        return filtered_data
-
     def _evoke_webhook(self, app: models.WebHookApp, data: dict, webhook_log: models.WebHookLog) -> None:
-        filtered_data = self._filter_data_by_selected_fields(app, data.get("event"), data)
-
-        payload = json.dumps(filtered_data, ensure_ascii=False).encode()
+        payload = json.dumps(data, ensure_ascii=False).encode()
         signature = hmac.new(app.secret_key.encode(), msg=payload, digestmod=sha256).hexdigest()
 
         headers = {
@@ -116,5 +108,5 @@ def register_event(event_code: str, event_title: str, available_fields: list[tup
 
     config.EVENTS.append((event_code, event_title))
 
-    if available_fields:
+    if available_fields is not None:
         config.EVENT_AVAILABLE_FIELDS[event_code] = available_fields
