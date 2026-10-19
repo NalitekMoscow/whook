@@ -127,6 +127,7 @@ class WebHookService:
 
     def retry_webhooks(self, log_id: int | None = None) -> None:
         logger.info("Webhook retrying has been started")
+        batch_size = 500
 
         # Подбираем более ранний лог по тому же объекту, который уже завершился со статусом SUCCESS
         newer_success = models.WebHookLog.objects.filter(
@@ -138,41 +139,46 @@ class WebHookService:
             event_timestamp__gt=OuterRef("event_timestamp"),
         )
 
-        with transaction.atomic():
-            logs = models.WebHookLog.objects.annotate(
-                has_newer_success=Exists(newer_success),
-            )
+        while True:
+            with transaction.atomic():
+                logs = models.WebHookLog.objects.annotate(
+                    has_newer_success=Exists(newer_success),
+                )
 
-            if log_id is not None:
-                logs = logs.filter(id=log_id)
-            else:
-                logs = (
-                    logs.filter(
+                if log_id is not None:
+                    logs = logs.filter(id=log_id)
+                else:
+                    logs = logs.filter(
                         status=models.WebHookLog.Status.FAILED,
                         retries__lt=config.MAX_RETRIES,
                         next_retry_at__lte=timezone.now(),
                     )
-                    .order_by("created_at")
+
+                logs = list(
+                    logs.order_by("created_at", "id")
+                    .select_for_update(skip_locked=True)[:batch_size]
                 )
 
-            logs = logs.select_for_update(skip_locked=True)
+                if not logs:
+                    break
 
-            for log in logs:
-                if log.has_newer_success:
-                    log.status = models.WebHookLog.Status.HAS_NEWER_SUCCESS
-                    log.save(update_fields=["status", "updated_at"])
-                    continue
+                for log in logs:
+                    if log.has_newer_success:
+                        log.status = models.WebHookLog.Status.HAS_NEWER_SUCCESS
+                        log.save(update_fields=["status", "updated_at"])
+                        continue
 
-                try:
-                    self.resend_webhook_by_log(log)
-                except Exception as e:
-                    logger.error(
-                        "Failed to resend webhook log",
-                        extra={
-                            "error": str(e),
-                            "log_id": log.id,
-                        },
-                    )
+                    try:
+                        self.resend_webhook_by_log(log)
+                    except Exception:
+                        logger.exception(
+                            "Failed to resend webhook log",
+                            extra={"log_id": log.id},
+                        )
+
+            if log_id is not None:
+                break
+
         logger.info("Webhook retrying has been finished")
 
 
