@@ -11,7 +11,7 @@ django = ">=4.0.0"
 djangorestframework = ">=3.9.0"
 python-dateutil = ">=2.8"
 requests = "^2.34.2"
-psycopg2 = "^2.9.13"
+psycopg2-binary = ">=2.9.9"
 
 [build-system]
 requires = ["poetry-core"]
